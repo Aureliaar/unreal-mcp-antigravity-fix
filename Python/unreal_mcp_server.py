@@ -10,6 +10,40 @@ import sys
 import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, Optional
+
+# --- Windows Strict Stdio Fix (for MCP compliance) ---
+# Prevents "invalid trailing data at the end of stream" error by enforcing LF (\n) over CRLF (\r\n).
+# Must be applied BEFORE any other imports that might capture stdout/stdin
+if sys.platform == "win32":
+    import msvcrt
+    import io
+    import os
+    
+    # 1. Set the file descriptors to binary mode
+    msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
+    msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+    
+    # 2. Define a proxy to strip \r from any binary writes to stdout
+    class BinaryCleanup:
+        def __init__(self, stream):
+            self.stream = stream
+        def write(self, data):
+            if isinstance(data, bytes):
+                # Strip \r to force \n only
+                return self.stream.write(data.replace(b'\r', b''))
+            return self.stream.write(data)
+        def flush(self):
+            self.stream.flush()
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+    # 3. Replace sys.stdout with a wrapper using our cleaning proxy
+    # Use universal newlines (None) for stdin inputs
+    sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8', newline=None)
+    # Use strict LF (\n) for stdout, and wrap the buffer to catch direct binary writes
+    sys.stdout = io.TextIOWrapper(BinaryCleanup(sys.stdout.buffer), encoding='utf-8', newline='\n', line_buffering=True)
+# -----------------------------------------------------
+
 from mcp.server.fastmcp import FastMCP
 
 # Configure logging with more detailed format
